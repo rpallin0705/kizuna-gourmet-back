@@ -50,7 +50,6 @@ public class JwtUtil {
         return Boolean.TRUE.equals(claims.get("device"));
     }
 
-    @SuppressWarnings("unchecked")
     public List<String> getRolesFromToken(String token) {
         Claims claims = Jwts.parserBuilder()
                 .setSigningKey(getKey())
