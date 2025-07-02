@@ -4,6 +4,8 @@ import com.microservice.order.application.mapper.OrderMapper;
 import com.microservice.order.domain.model.Order;
 import com.microservice.order.domain.repository.OrderRepository;
 import com.microservice.order.infrastructure.persistence.springdata.SpringDataOrderRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -41,5 +43,11 @@ public class JpaOrderRepository implements OrderRepository {
     @Override
     public void deleteById(Long id) {
         springRepo.deleteById(id);
+    }
+
+    @Override
+    public Page<Order> findAll(Pageable pageable) {
+        return springRepo.findAll(pageable)
+                .map(OrderMapper::toDomain);
     }
 }

@@ -4,11 +4,18 @@ import com.microservice.order.application.service.OrderService;
 import com.microservice.order.domain.model.Order;
 import com.microservice.order.web.dto.*;
 import com.microservice.order.web.mapper.OrderDtoMapper;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/orders")
@@ -20,7 +27,14 @@ public class OrderController {
         this.service = service;
     }
 
+    @GetMapping("/admin")
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<Page<OrderDTO>> getAllPaged(Pageable pageable){
+        return ResponseEntity.ok(service.getAllPaged(pageable));
+    }
+
     @GetMapping
+    @PreAuthorize("hasAnyRole('USER', 'COOK')")
     public ResponseEntity<List<OrderDTO>> getAll() {
         return ResponseEntity.ok(service.getAllFullOrders());
     }

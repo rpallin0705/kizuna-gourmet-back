@@ -17,6 +17,8 @@ import com.microservice.order.web.mapper.KitchenOrderMapper;
 import com.microservice.order.web.mapper.OrderDtoMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -66,21 +68,9 @@ public class OrderServiceImpl implements OrderService {
     public OrderDTO getFullOrder(Long id) {
         Order order = getOrderById(id);
 
-        Map<Long, ProductDTO> productMap = order.getItems().stream()
-                .map(OrderItem::getProductId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .collect(Collectors.toMap(pid -> pid, productClient::getProductById));
-
-        Map<Long, MenuDTO> menuMap = order.getItems().stream()
-                .map(OrderItem::getMenuId)
-                .filter(Objects::nonNull)
-                .distinct()
-                .collect(Collectors.toMap(mid -> mid, menuClient::getMenuById));
-
-        UserDetailsDTO userDetails = order.getUserId() != null && order.getAddressId() != null
-                ? userClientAdapter.getUserDetailsById(order.getUserId(), order.getAddressId())
-                : null;
+        Map<Long, ProductDTO> productMap = mapProducts(order.getItems());
+        Map<Long, MenuDTO> menuMap = mapMenus(order.getItems());
+        UserDetailsDTO userDetails = getUserDetails(order.getUserId(), order.getAddressId());
 
         return OrderDtoMapper.toDto(order, productMap, menuMap, userDetails);
     }
@@ -88,54 +78,40 @@ public class OrderServiceImpl implements OrderService {
     @Override
     public List<OrderDTO> getAllFullOrders() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        String email = auth.getName();
-
-        Set<String> authorities = auth.getAuthorities().stream()
+        Set<String> roles = auth.getAuthorities().stream()
                 .map(GrantedAuthority::getAuthority)
                 .collect(Collectors.toSet());
 
-        boolean isAdmin = authorities.contains("ROLE_ADMIN");
-        boolean isCook = authorities.contains("ROLE_COOK");
-        boolean isUser = authorities.contains("ROLE_USER");
+        boolean isCook = roles.contains("ROLE_COOK");
+        boolean isUser = roles.contains("ROLE_USER");
 
-
-        Long userId;
-        if (isUser) {
-            userId = userClientAdapter.getAuthenticatedUser().id();
-            log.info("🔍 ID del usuario autenticado: {}", userId);
-        } else {
-            userId = null;
-        }
-
-        final LocalDate today = LocalDate.now();
+        Long userId = isUser ? userClientAdapter.getAuthenticatedUser().id() : null;
+        LocalDate today = LocalDate.now();
 
         return orderRepository.findAll().stream()
                 .filter(order -> {
-                    if (isAdmin) return true;
                     if (isCook) return order.getCreatedAt().toLocalDate().equals(today);
-                    if (isUser) return order.getUserId() != null && order.getUserId().equals(userId);
+                    if (isUser) return Objects.equals(order.getUserId(), userId);
                     return false;
                 })
                 .map(order -> {
-                    Map<Long, ProductDTO> productMap = order.getItems().stream()
-                            .map(OrderItem::getProductId)
-                            .filter(Objects::nonNull)
-                            .distinct()
-                            .collect(Collectors.toMap(pid -> pid, productClient::getProductById));
-
-                    Map<Long, MenuDTO> menuMap = order.getItems().stream()
-                            .map(OrderItem::getMenuId)
-                            .filter(Objects::nonNull)
-                            .distinct()
-                            .collect(Collectors.toMap(mid -> mid, menuClient::getMenuById));
-
-                    UserDetailsDTO userDetails = (order.getUserId() != null && order.getAddressId() != null)
-                            ? userClientAdapter.getUserDetailsById(order.getUserId(), order.getAddressId())
-                            : null;
-
+                    Map<Long, ProductDTO> productMap = mapProducts(order.getItems());
+                    Map<Long, MenuDTO> menuMap = mapMenus(order.getItems());
+                    UserDetailsDTO userDetails = getUserDetails(order.getUserId(), order.getAddressId());
                     return OrderDtoMapper.toDto(order, productMap, menuMap, userDetails);
                 })
                 .toList();
+    }
+
+    @Override
+    public Page<OrderDTO> getAllPaged(Pageable pageable) {
+        return orderRepository.findAll(pageable)
+                .map(order -> {
+                    Map<Long, ProductDTO> productMap = mapProducts(order.getItems());
+                    Map<Long, MenuDTO> menuMap = mapMenus(order.getItems());
+                    UserDetailsDTO userDetails = getUserDetails(order.getUserId(), order.getAddressId());
+                    return OrderDtoMapper.toDto(order, productMap, menuMap, userDetails);
+                });
     }
 
     @Override
@@ -152,22 +128,14 @@ public class OrderServiceImpl implements OrderService {
         for (OrderItem item : order.getItems()) {
             if (item.getProductId() != null) {
                 ProductDTO product = productClient.getProductById(item.getProductId());
-
-                if (!product.available()) {
-                    throw new RuntimeException("Producto no disponible: " + product.name());
-                }
-
+                if (!product.available()) throw new RuntimeException("Producto no disponible: " + product.name());
                 item.setPrice(product.price());
                 total += product.price() * item.getQuantity();
             }
 
             if (item.getMenuId() != null) {
                 MenuDTO menu = menuClient.getMenuById(item.getMenuId());
-
-                if (!menu.active()) {
-                    throw new RuntimeException("Men\u00fa no disponible: " + menu.name());
-                }
-
+                if (!menu.active()) throw new RuntimeException("Menú no disponible: " + menu.name());
                 item.setPrice(menu.totalPrice());
                 total += menu.totalPrice() * item.getQuantity();
             }
@@ -223,18 +191,8 @@ public class OrderServiceImpl implements OrderService {
         return orderRepository.findAll().stream()
                 .filter(order -> order.getStatus() == OrderStatus.CREATED || order.getStatus() == OrderStatus.PREPARING)
                 .map(order -> {
-                    Map<Long, ProductDTO> productMap = order.getItems().stream()
-                            .map(OrderItem::getProductId)
-                            .filter(Objects::nonNull)
-                            .distinct()
-                            .collect(Collectors.toMap(pid -> pid, productClient::getProductById));
-
-                    Map<Long, MenuDTO> menuMap = order.getItems().stream()
-                            .map(OrderItem::getMenuId)
-                            .filter(Objects::nonNull)
-                            .distinct()
-                            .collect(Collectors.toMap(mid -> mid, menuClient::getMenuById));
-
+                    Map<Long, ProductDTO> productMap = mapProducts(order.getItems());
+                    Map<Long, MenuDTO> menuMap = mapMenus(order.getItems());
                     return KitchenOrderMapper.toDto(order, productMap, menuMap);
                 })
                 .toList();
@@ -257,5 +215,27 @@ public class OrderServiceImpl implements OrderService {
                 .status(newStatus)
                 .changedAt(LocalDateTime.now())
                 .build());
+    }
+
+    private Map<Long, ProductDTO> mapProducts(List<OrderItem> items) {
+        return items.stream()
+                .map(OrderItem::getProductId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toMap(pid -> pid, productClient::getProductById));
+    }
+
+    private Map<Long, MenuDTO> mapMenus(List<OrderItem> items) {
+        return items.stream()
+                .map(OrderItem::getMenuId)
+                .filter(Objects::nonNull)
+                .distinct()
+                .collect(Collectors.toMap(mid -> mid, menuClient::getMenuById));
+    }
+
+    private UserDetailsDTO getUserDetails(Long userId, Long addressId) {
+        return (userId != null && addressId != null)
+                ? userClientAdapter.getUserDetailsById(userId, addressId)
+                : null;
     }
 }
